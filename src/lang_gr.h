@@ -1,4 +1,4 @@
-#define FONT(x) x##_tf
+#define FONT(x) x##_te
 
 //Temperatur - Luftfeuchtigkeit - Vorschau
 const String TXT_FORECAST_VALUES  = "3 Tages Vorhersage";
