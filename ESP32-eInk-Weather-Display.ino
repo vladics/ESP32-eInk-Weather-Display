@@ -24,6 +24,7 @@
 #include <ArduinoJson.h>     // https://github.com/bblanchon/ArduinoJson
 #include <WiFi.h>
 #include "time.h"
+#include "esp_sntp.h"
 #define ENABLE_GxEPD2_display 0
 #include <GxEPD2_3C.h>
 #include <U8g2_for_Adafruit_GFX.h>
@@ -65,8 +66,8 @@ bool    LargeIcon = true, SmallIcon = false;
 #define Large 7    // For best results use odd numbers
 #define Small 3    // For best results use odd numbers
 String  time_str, date_str, ForecastDay; // strings to hold time and date
-long    StartTime = 0;
 wl_status_t last_wifi_status;
+sntp_sync_status_t syncStatus;
 //################ PROGRAM VARIABLES and OBJECTS ##########################################
 #define max_readings 25 // In groups of 3-hours (3-days = 3 x 8 = 24)
 Forecast_record_type  WxConditions[1];
@@ -102,9 +103,8 @@ void setup() {
   setCpuFrequencyMhz(10);
   setenv("TZ", Timezone, 1);  // setenv()adds the "TZ" variable to the environment with a value TimeZone, only used if set to 1, 0 means no change
   tzset(); // Set the TZ environment variable
-  time_t now1 = time(nullptr);
-  localtime_r(&now1, &timeinfo);
-  StartTime = millis();
+  time_t now = time(nullptr);
+  localtime_r(&now, &timeinfo);
 
   Wire.begin(I2C_SDA, I2C_SCL);
   // Serial.begin(9600);
@@ -120,7 +120,7 @@ void setup() {
       WakeUp = (timeinfo.tm_hour >= WakeupHour || timeinfo.tm_hour <= SleepHour);
     else
       WakeUp = (timeinfo.tm_hour >= WakeupHour && timeinfo.tm_hour <= SleepHour);
-    if (WakeUp || timeinfo.tm_year < 2000) { // Check the system time to determine whether this is a new start
+    if (WakeUp || timeinfo.tm_year < (2025 - 1900) ) { // Check the system time to determine whether this is a new start
       setCpuFrequencyMhz(80);
       if (StartWiFi() == WL_CONNECTED && SetupTime() == true) {
         display.fillScreen(GxEPD_WHITE);
@@ -190,20 +190,16 @@ void BeginSleep() {
   clean_start = false;
   startup_count++;
   display.powerOff();
-  long SleepTimer = (SleepDuration * 60 - ((timeinfo.tm_min % SleepDuration) * 60 + timeinfo.tm_sec)); // Some ESP32 are too fast to maintain accurate time
-  esp_sleep_enable_timer_wakeup((SleepTimer + 20) * 1000000LL); // Added +20 seconds to cover ESP32 RTC timer source inaccuracies
+  esp_sleep_enable_timer_wakeup((SleepDuration * 60) * 1000000LL);
 #ifdef BUILTIN_LED
   pinMode(BUILTIN_LED, INPUT); // If it's On, turn it off and some boards use GPIO for SPI-SS, which remains low after screen use
   digitalWrite(BUILTIN_LED, HIGH);
 #endif
-  Serial.println("Entering " + String(SleepTimer) + "-secs of sleep time");
-  Serial.println("Awake for : " + String((millis() - StartTime) / 1000.0, 3) + "-secs");
-  Serial.println("Starting deep-sleep period...");
+  Serial.println("Entering " + String(SleepDuration) + " minutes of sleep time");
   esp_deep_sleep_start();  // Sleep for e.g. 30 minutes
 }
 //#########################################################################################
 void DisplayWeather() {             // 2.9" e-paper display is 296x128 resolution
-  UpdateLocalTime();
   Draw_Heading_Section();           // Top line of the display
   Draw_Main_Weather_Section();      // Centre section of display for Location, temperature, Weather report, Wx Symbol and wind direction
   int Forecast = 2, Dposition = 0;
@@ -263,11 +259,9 @@ void DisplayAstronomySection(int x, int y) {
   drawString(x + 80, y + 20, ConvertUnixTime(WxConditions[0].Sunrise + WxConditions[0].Timezone).substring(0, (Units == "M" ? 5 : 7)), LEFT);
   SunSet(x + 64, y + 38);
   drawString(x + 80, y + 35, ConvertUnixTime(WxConditions[0].Sunset + WxConditions[0].Timezone).substring(0, (Units == "M" ? 5 : 7)), LEFT);
-  time_t now = time(nullptr);
-  struct tm * now_utc = gmtime(&now);
-  const int day_utc   = now_utc->tm_mday;
-  const int month_utc = now_utc->tm_mon + 1;
-  const int year_utc  = now_utc->tm_year + 1900;
+  const int day_utc   = timeinfo.tm_mday;
+  const int month_utc = timeinfo.tm_mon + 1;
+  const int year_utc  = timeinfo.tm_year + 1900;
   drawString(x + 6, y + 53, MoonPhase(day_utc, month_utc, year_utc, Hemisphere), LEFT);
   DrawMoon(x - 12, y - 1, day_utc, month_utc, year_utc, Hemisphere);
 }
@@ -464,18 +458,20 @@ void StopWiFi() {
 }
 //#########################################################################################
 boolean SetupTime() {
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer, "time.nist.gov"); // (gmtOffset_sec, daylightOffset_sec, ntpServer)
-  delay(100);
-  bool TimeStatus = UpdateLocalTime();
-  return TimeStatus;
-}
-//#########################################################################################
-boolean UpdateLocalTime() {
   char   time_output[30], day_output[30], update_time[30];
-  while (!getLocalTime(&timeinfo, 5000)) { // Wait for 5-sec for time to synchronise
-    Serial.println("Failed to obtain time");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer, "time.nist.gov"); // (gmtOffset_sec, daylightOffset_sec, ntpServer)
+  for(auto count = 0; count < 100; count++) {
+    syncStatus = esp_sntp_get_sync_status();
+    if (syncStatus == SNTP_SYNC_STATUS_COMPLETED) break;
+    delay(100);
+  }
+  if (syncStatus != SNTP_SYNC_STATUS_COMPLETED) {
+    Serial.println("Failed to sync time");
     return false;
   }
+  Serial.println("*** Time Synced! ***");
+  time_t now = time(nullptr);
+  localtime_r(&now, &timeinfo);
   // See http://www.cplusplus.com/reference/ctime/strftime/
   if (Units == "M") {
     if ((Language == "CZ") || (Language == "DE") || (Language == "NL") || (Language == "PL")) {
