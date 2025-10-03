@@ -126,18 +126,18 @@ void setup() {
         display.fillScreen(GxEPD_WHITE);
         byte Attempts = 1;
         bool RxWeather = false, RxForecast = false;
-        WiFiClient client;   // wifi client object
+        WiFiClient client;
         while ((RxWeather == false || RxForecast == false) && Attempts <= 2) { // Try up-to 2 time for Weather and Forecast data
           if (RxWeather  == false) RxWeather  = obtain_wx_data(client, "weather");
           if (RxForecast == false) RxForecast = obtain_wx_data(client, "forecast");
           Attempts++;
         }
         if (RxWeather && RxForecast) { // Only if received both Weather or Forecast proceed
-          StopWiFi(); // Reduces power consumption
           GetHighsandLows();
           DisplayWeather();
         }
       }
+      StopWiFi(); // Reduces power consumption
     }
   }
   ReadDrawSensors();
@@ -149,7 +149,7 @@ void loop() { // this will never run!
 //#########################################################################################
 void ReadDrawSensors() {
   int8_t  x = 100, y = 16, w = 62, h = 38;
-  if (!clean_start || last_wifi_status != WL_CONNECTED) {
+  if (!clean_start || last_wifi_status != WL_CONNECTED || syncStatus != SNTP_SYNC_STATUS_COMPLETED) {
     display.setPartialWindow(x, y, w, h);
     display.firstPage();
     display.fillScreen(GxEPD_WHITE);
@@ -179,7 +179,7 @@ void ReadDrawSensors() {
     Serial.println("Failed to initialize BMP280 or AHT20 sensor!");
     drawRedString(x + 16, y + 6, "No data", LEFT);
   }
-  if (!clean_start || last_wifi_status != WL_CONNECTED) {
+  if (!clean_start || last_wifi_status != WL_CONNECTED || syncStatus != SNTP_SYNC_STATUS_COMPLETED) {
     display.nextPage();
   } else {
     display.display(false); // Full screen update mode
