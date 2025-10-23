@@ -28,7 +28,6 @@
 #define ENABLE_GxEPD2_display 0
 #include <GxEPD2_3C.h>
 #include <U8g2_for_Adafruit_GFX.h>
-#include "src/forecast_record.h"
 //#include "src/lang.h"                 // Localisation (English)
 #include "src/lang_gr.h"            // Localisation (German)
 #include "src/icons.h"
@@ -66,20 +65,12 @@ bool    LargeIcon = true, SmallIcon = false;
 #define Large 7    // For best results use odd numbers
 #define Small 3    // For best results use odd numbers
 String  time_str, date_str, ForecastDay; // strings to hold time and date
+bool data_updated = true;
 wl_status_t last_wifi_status;
 sntp_sync_status_t syncStatus;
 //################ PROGRAM VARIABLES and OBJECTS ##########################################
-#define max_readings 25 // In groups of 3-hours (3-days = 3 x 8 = 24)
-Forecast_record_type  WxConditions[1];
-Forecast_record_type  WxForecast[max_readings];
-
+#define max_readings 8 // Daily forecast for 8 days
 #include "src/common.h"
-
-float pressure_readings[max_readings]    = {0};
-float temperature_readings[max_readings] = {0};
-float humidity_readings[max_readings]    = {0};
-float rain_readings[max_readings]        = {0};
-float snow_readings[max_readings]        = {0};
 
 uint16_t max_starts_between_refresh = 6;
 long SleepDuration = 30; // Sleep time in minutes, aligned to the nearest minute boundary, so if 30 will always update at 00 or 30 past the hour
@@ -89,14 +80,8 @@ int  SleepHour     = 23; // Sleep after (23+1) 00:00 to save battery power
 RTC_DATA_ATTR bool clean_start = true;
 RTC_DATA_ATTR uint8_t startup_count = 0;
 RTC_DATA_ATTR struct tm timeinfo;
-
-typedef struct { // For current Day and Day 1, 2, 3, etc
-  String Time;
-  float  High;
-  float  Low;
-} HL_record_type;
-
-HL_record_type  HLReadings[max_readings];
+RTC_DATA_ATTR String wifi_ssid;
+RTC_DATA_ATTR String wifi_pass;
 
 //#########################################################################################
 void setup() {
@@ -115,30 +100,26 @@ void setup() {
   }
   InitialiseDisplay();
   if (clean_start) {
-    bool WakeUp = false;
-    if (WakeupHour > SleepHour)
-      WakeUp = (timeinfo.tm_hour >= WakeupHour || timeinfo.tm_hour <= SleepHour);
-    else
-      WakeUp = (timeinfo.tm_hour >= WakeupHour && timeinfo.tm_hour <= SleepHour);
+    bool WakeUp = (WakeupHour > SleepHour)
+    ? (timeinfo.tm_hour >= WakeupHour || timeinfo.tm_hour <= SleepHour)
+    : (timeinfo.tm_hour >= WakeupHour && timeinfo.tm_hour <= SleepHour);
     if (WakeUp || timeinfo.tm_year < (2025 - 1900) ) { // Check the system time to determine whether this is a new start
       setCpuFrequencyMhz(80);
       if (StartWiFi() == WL_CONNECTED && SetupTime() == true) {
-        display.fillScreen(GxEPD_WHITE);
         byte Attempts = 1;
-        bool RxWeather = false, RxForecast = false;
+        bool RxWeather = false;
         WiFiClient client;
-        while ((RxWeather == false || RxForecast == false) && Attempts <= 2) { // Try up-to 2 time for Weather and Forecast data
-          if (RxWeather  == false) RxWeather  = obtain_wx_data(client, "weather");
-          if (RxForecast == false) RxForecast = obtain_wx_data(client, "forecast");
+        while (!RxWeather && Attempts <= 2) { // Try up-to 2 times for Weather and Forecast data
+          RxWeather = ReceiveOneCallWeather(client, false);
           Attempts++;
         }
-        if (RxWeather && RxForecast) { // Only if received both Weather or Forecast proceed
-          GetHighsandLows();
+        if (RxWeather) { // Only if received Weather data
+          display.fillScreen(GxEPD_WHITE);
           DisplayWeather();
-        }
-      }
+        } else data_updated = false;
+      } else data_updated = false;
       StopWiFi(); // Reduces power consumption
-    }
+    } else data_updated = false;
   }
   ReadDrawSensors();
   BeginSleep();
@@ -149,7 +130,7 @@ void loop() { // this will never run!
 //#########################################################################################
 void ReadDrawSensors() {
   int8_t  x = 100, y = 16, w = 62, h = 38;
-  if (!clean_start || last_wifi_status != WL_CONNECTED || syncStatus != SNTP_SYNC_STATUS_COMPLETED) {
+  if (!clean_start || !data_updated) {
     display.setPartialWindow(x, y, w, h);
     display.firstPage();
     display.fillScreen(GxEPD_WHITE);
@@ -179,11 +160,8 @@ void ReadDrawSensors() {
     Serial.println("Failed to initialize BMP280 or AHT20 sensor!");
     drawRedString(x + 16, y + 6, "No data", LEFT);
   }
-  if (!clean_start || last_wifi_status != WL_CONNECTED || syncStatus != SNTP_SYNC_STATUS_COMPLETED) {
-    display.nextPage();
-  } else {
-    display.display(false); // Full screen update mode
-  }
+  if (!clean_start || !data_updated) display.nextPage();
+  else display.display(false); // Full screen update mode
 }
 //#########################################################################################
 void BeginSleep() {
@@ -202,18 +180,12 @@ void BeginSleep() {
 void DisplayWeather() {             // 2.9" e-paper display is 296x128 resolution
   Draw_Heading_Section();           // Top line of the display
   Draw_Main_Weather_Section();      // Centre section of display for Location, temperature, Weather report, Wx Symbol and wind direction
-  int Forecast = 2, Dposition = 0;
-  String StartTime  = "08:00" + String((Units == "M" ? "" : "a"));
-  String MidTime    = "09:00" + String((Units == "M" ? "" : "a"));
-  String FinishTime = "10:00" + String((Units == "M" ? "" : "a"));
-  do {
-    String Ftime = ConvertUnixTime(WxForecast[Forecast].Dt + WxConditions[0].Timezone).substring(0, (Units == "M" ? 5 : 6));
-    if (Ftime == StartTime || Ftime == MidTime || Ftime == FinishTime) {
-      DisplayForecastWeather(18, 104, Forecast, Dposition, 57); // x,y coordinates, forecast number, position, spacing width
-      Dposition++;
-    }
+  int Forecast = 1, Dposition = 0;
+  while (Forecast <= 3) {
+    DisplayForecastWeather(18, 104, Forecast, Dposition, 57); // x,y coordinates, forecast number, position, spacing width
+    Dposition++;
     Forecast++;
-  } while (Forecast < max_readings);
+  }
 }
 //#########################################################################################
 void Draw_Heading_Section() {
@@ -225,12 +197,12 @@ void Draw_Heading_Section() {
 }
 //#########################################################################################
 void DisplayForecastWeather(int x, int y, int forecast, int Dposition, int fwidth) {
-  GetForecastDay(WxForecast[forecast].Dt);
+  GetForecastDay(Daily[forecast].Dt);
   x += fwidth * Dposition;
-  DisplayConditionsSection(x + 12, y, WxForecast[forecast].Icon, SmallIcon);
+  DisplayConditionsSection(x + 12, y, Daily[forecast].Icon, SmallIcon);
   u8g2Fonts.setFont(u8g2_font_helvB08_te);
   drawString(x + 8, y - 24, ForecastDay, CENTER);
-  drawString(x + 18, y + 12, String(HLReadings[Dposition].High, 0) + "°/" + String(HLReadings[Dposition].Low, 0) + "°", CENTER);
+  drawString(x + 18, y + 12, String(Daily[Dposition].High, 0) + "°/" + String(Daily[Dposition].Low, 0) + "°", CENTER);
   display.drawRect(x - 18, y - 27, fwidth, 51, GxEPD_BLACK);
 }
 //#########################################################################################
@@ -246,7 +218,7 @@ void Draw_Main_Weather_Section() {
   }
   DrawPressureTrend(3, 49, WxConditions[0].Pressure, WxConditions[0].Trend);
   u8g2Fonts.setFont(u8g2_font_helvB12_te);
-  String Wx_Description = WxConditions[0].Forecast0;
+  String Wx_Description = WxConditions[0].Description;
   drawString(2, 64, TitleCase(Wx_Description), LEFT);
   display.drawLine(0, 77, 296, 77, GxEPD_BLACK);
   DisplayAstronomySection(170, 64); // Astronomy section Sun rise/set and Moon phase plus icon
@@ -404,34 +376,6 @@ void DrawPressureTrend(int x, int y, float pressure, String slope) {
     display.drawLine(x + 4, y + 4, x + 8, y, GxEPD_BLACK);
   }
 }
-//#########################################################################################
-void GetHighsandLows() {
-  for (int d = 0; d < max_readings; d++) {
-    HLReadings[d].Time = "";
-    HLReadings[d].High = (Units == "M"?-50:-58);
-    HLReadings[d].Low  = (Units == "M"?70:158);
-  }
-  int Day = 0;
-  String StartTime  = "08:00" + String((Units == "M" ? "" : "a"));
-  String FinishTime = "10:00" + String((Units == "M" ? "" : "a"));
-  for (int r = 0; r < max_readings; r++) {
-    if (ConvertUnixTime(WxForecast[r].Dt + WxConditions[0].Timezone).substring(0, (Units == "M" ? 5 : 6)) >= StartTime && ConvertUnixTime(WxForecast[r].Dt + WxForecast[r].Timezone).substring(0, (Units == "M" ? 5 : 6)) <= FinishTime) { // found first period in day
-      HLReadings[Day].Time = ConvertUnixTime(WxForecast[r].Dt + WxConditions[0].Timezone).substring(0, (Units == "M" ? 5 : 6));
-      for (int InDay = 0; InDay < 8; InDay++) { // 00:00 to 21:00 is 8 readings
-        if (r + InDay < max_readings) {
-          if (WxForecast[r + InDay].High > HLReadings[Day].High) {
-            HLReadings[Day].High = WxForecast[r + InDay].High;
-          }
-          if (WxForecast[r + InDay].Low  < HLReadings[Day].Low)  {
-            HLReadings[Day].Low  = WxForecast[r + InDay].Low;
-          }
-        }
-      }
-      // Serial.println("Cnt= " + String(Day) + "Day=" + HLReadings[Day].Time + " " + String(HLReadings[Day].High) + " " + String(HLReadings[Day].Low));
-      Day++;
-    }
-  }
-} // Now the array HLReadings has 5-days of Highs and Lows
 //#########################################################################################
 uint8_t StartWiFi() {
   Serial.println("\r\nConnecting to: " + String(ssid));

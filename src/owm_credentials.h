@@ -1,12 +1,11 @@
 // Change to your WiFi credentials
-const char* ssid     = "XXX";
-const char* password = "XXX";
+String ssid     = "XXX";
+String password = "XXX";
 
 // Use your own API key by signing up for a free developer account at https://openweathermap.org/
 String apikey       = "XXX";                      // See: https://openweathermap.org/
 const char server[] = "api.openweathermap.org";
-//http://api.openweathermap.org/data/2.5/forecast?q=Melksham,UK&APPID=your_OWM_API_key&mode=json&units=metric&cnt=40
-//http://api.openweathermap.org/data/2.5/weather?q=Melksham,UK&APPID=your_OWM_API_key&mode=json&units=metric&cnt=1
+//http://api.openweathermap.org/data/3.0/onecall?lat=LAT&lon=LON&APPID=apikey&mode=json&units=metric&lang=Language&exclude=minutely
 //Set your location according to OWM locations
 String LAT              = "XX.XX";                         // Home location Latitude
 String LON              = "XX.XX";                         // Home location Longitude
