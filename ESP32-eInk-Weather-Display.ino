@@ -65,7 +65,7 @@ bool    LargeIcon = true, SmallIcon = false;
 #define Large 7    // For best results use odd numbers
 #define Small 3    // For best results use odd numbers
 String  time_str, date_str, ForecastDay; // strings to hold time and date
-bool data_updated = true;
+bool data_updated = false;
 wl_status_t last_wifi_status;
 sntp_sync_status_t syncStatus;
 //################ PROGRAM VARIABLES and OBJECTS ##########################################
@@ -116,10 +116,11 @@ void setup() {
         if (RxWeather) { // Only if received Weather data
           display.fillScreen(GxEPD_WHITE);
           DisplayWeather();
-        } else data_updated = false;
-      } else data_updated = false;
+          data_updated = true;
+        }
+      }
       StopWiFi(); // Reduces power consumption
-    } else data_updated = false;
+    }
   }
   ReadDrawSensors();
   BeginSleep();
@@ -403,14 +404,14 @@ void StopWiFi() {
 //#########################################################################################
 boolean SetupTime() {
   char   time_output[30], day_output[30], update_time[30];
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer, "time.nist.gov"); // (gmtOffset_sec, daylightOffset_sec, ntpServer)
+  configTzTime(Timezone, ntpServer, "time.google.com"); // (const char* Timezone, ntpServer)
   for(auto count = 0; count < 100; count++) {
     syncStatus = esp_sntp_get_sync_status();
     if (syncStatus == SNTP_SYNC_STATUS_COMPLETED) break;
     delay(100);
   }
   if (syncStatus != SNTP_SYNC_STATUS_COMPLETED) {
-    Serial.println("Failed to sync time");
+    Serial.println("*** Failed to sync time! ***");
     return false;
   }
   Serial.println("*** Time Synced! ***");
