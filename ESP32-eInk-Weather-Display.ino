@@ -208,7 +208,7 @@ void DisplayForecastWeather(int x, int y, int forecast, int Dposition, int fwidt
 }
 //#########################################################################################
 void Draw_Main_Weather_Section() {
-  DisplayConditionsSection(207, 54, WxConditions[0].Icon, LargeIcon);
+  DisplayConditionsSection(207, 52, WxConditions[0].Icon, LargeIcon);
   u8g2Fonts.setFont(u8g2_font_helvB14_te);
   drawString(3, 33, String(WxConditions[0].Temperature, 1) + "° / " + String(WxConditions[0].Humidity, 0) + "%", LEFT);
   u8g2Fonts.setFont(u8g2_font_helvB10_te);
@@ -405,7 +405,7 @@ void StopWiFi() {
 boolean SetupTime() {
   char   time_output[30], day_output[30], update_time[30];
   configTzTime(Timezone, ntpServer, "time.google.com"); // (const char* Timezone, ntpServer)
-  for(auto count = 0; count < 100; count++) {
+  for(auto count = 0; count < 200; count++) {
     syncStatus = esp_sntp_get_sync_status();
     if (syncStatus == SNTP_SYNC_STATUS_COMPLETED) break;
     delay(100);
@@ -660,7 +660,7 @@ void DisplayConditionsSection(int x, int y, String IconName, bool IconSize) {
 }
 //#########################################################################################
 void InitialiseDisplay() {
-  display.init(115200, clean_start, 50, false);
+  display.init(115200, false, 50, false);    // The 3-color display doesn't have a fast local screen refresh function, so the false flag is used for initial. Otherwise, the clean_start variable should be used
   SPI.end();
   SPI.begin(EPD_SCL, EPD_MISO, EPD_SDA, EPD_CS);
   display.setRotation(1);                    // Use 1 or 3 for landscape modes
